@@ -4,6 +4,7 @@ import exception.*;
 import model.*;
 import service.AuthService;
 import service.BookingService;
+import service.UpgradeMemberService;
 import util.Fmt;
 
 import javax.swing.*;
@@ -24,7 +25,11 @@ import java.util.List;
 public class PelangganFrame extends JFrame {
     private final Pelanggan user;
     private final BookingService bs;
+    private final UpgradeMemberService us;
     private final AuthService auth;
+    private final Timer timer;
+
+    private final JLabel lblHeader = new JLabel();
 
     private final JSpinner spTanggal = new JSpinner(new SpinnerDateModel());
     private final JComboBox<JenisLapangan> cbJenis = new JComboBox<>(JenisLapangan.values());
@@ -35,10 +40,19 @@ public class PelangganFrame extends JFrame {
     private final DefaultTableModel mRiwayat = UiUtil.modelTabel();
     private final JTable tRiwayat = UiUtil.tabel(mRiwayat);
 
-    public PelangganFrame(Pelanggan user, BookingService bs, AuthService auth) {
+    private final JLabel lblInfoMember = new JLabel();
+    private final JComboBox<PaketUpgrade> cbPaketUpgrade = new JComboBox<>();
+    private final JComboBox<String> cbMetodeUpgrade = new JComboBox<>(Pembayaran.DAFTAR_METODE);
+    private final JButton btnAjukanUpgrade = new JButton("Ajukan Upgrade");
+    private final JLabel lblStatusUpgrade = new JLabel();
+    private final DefaultTableModel mUpgrade = UiUtil.modelTabel();
+    private final JTable tUpgrade = UiUtil.tabel(mUpgrade);
+
+    public PelangganFrame(Pelanggan user, BookingService bs, UpgradeMemberService us, AuthService auth) {
         super("Pelanggan - " + user.getNama());
         this.user = user;
         this.bs = bs;
+        this.us = us;
         this.auth = auth;
         setDefaultCloseOperation(EXIT_ON_CLOSE);
         setSize(960, 600);
@@ -47,25 +61,31 @@ public class PelangganFrame extends JFrame {
         JTabbedPane tabs = new JTabbedPane();
         tabs.addTab("Cek Jadwal & Booking", buatTabJadwal());
         tabs.addTab("Riwayat Pemesanan", buatTabRiwayat());
+        tabs.addTab("Upgrade Member", buatTabUpgrade());
+        tabs.addChangeListener(e -> refreshSemua());
         add(tabs, BorderLayout.CENTER);
         add(buatHeader(), BorderLayout.NORTH);
 
         refreshSemua();
-        Timer timer = new Timer(30_000, e -> refreshSemua());   // memicu lazy expiration + refresh tampilan
+        timer = new Timer(30_000, e -> refreshSemua());   // memicu lazy expiration + refresh tampilan & status member
         timer.start();
     }
 
     private JPanel buatHeader() {
         JPanel p = new JPanel(new BorderLayout());
         p.setBorder(BorderFactory.createEmptyBorder(8, 12, 8, 12));
-        JLabel l = new JLabel("Halo, " + user.getNama() + "  |  Member: " + user.getMember()
-                + " (" + user.getDiskon().getNama() + ")");
-        l.setFont(l.getFont().deriveFont(Font.BOLD));
+        lblHeader.setFont(lblHeader.getFont().deriveFont(Font.BOLD));
+        perbaruiHeader();
         JButton logout = new JButton("Logout");
-        logout.addActionListener(e -> { dispose(); new LoginFrame(auth, bs).setVisible(true); });
-        p.add(l, BorderLayout.WEST);
+        logout.addActionListener(e -> { timer.stop(); dispose(); new LoginFrame(auth, bs, us).setVisible(true); });
+        p.add(lblHeader, BorderLayout.WEST);
         p.add(logout, BorderLayout.EAST);
         return p;
+    }
+
+    private void perbaruiHeader() {
+        lblHeader.setText("Halo, " + user.getNama() + "  |  Member: " + user.getMember()
+                + " (" + user.getDiskon().getNama() + ")");
     }
 
     // ================= TAB JADWAL =================
@@ -156,6 +176,8 @@ public class PelangganFrame extends JFrame {
     }
 
     private void dialogBooking(Lapangan l, LocalDateTime mulai) {
+        us.segarkanPelanggan(user);
+        perbaruiHeader();
         // durasi maksimum: sampai slot berikutnya terisi / tutup / batas 3 jam
         int maks = 0;
         for (int d = 1; d <= BookingService.MAKS_DURASI; d++) {
@@ -293,6 +315,96 @@ public class PelangganFrame extends JFrame {
         }
     }
 
+    // ================= TAB UPGRADE MEMBER =================
+    private JPanel buatTabUpgrade() {
+        JPanel root = new JPanel(new BorderLayout(0, 8));
+
+        JPanel atas = new JPanel(new BorderLayout(0, 4));
+        atas.setBorder(BorderFactory.createEmptyBorder(8, 10, 4, 10));
+
+        lblInfoMember.setFont(lblInfoMember.getFont().deriveFont(Font.BOLD, 13f));
+        atas.add(lblInfoMember, BorderLayout.NORTH);
+
+        JPanel form = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
+        JButton refresh = new JButton("Refresh");
+        btnAjukanUpgrade.addActionListener(e -> aksiAjukanUpgrade());
+        refresh.addActionListener(e -> refreshSemua());
+        form.add(new JLabel("Paket Upgrade:"));
+        form.add(cbPaketUpgrade);
+        form.add(new JLabel("Metode:"));
+        form.add(cbMetodeUpgrade);
+        form.add(btnAjukanUpgrade);
+        form.add(refresh);
+        atas.add(form, BorderLayout.CENTER);
+
+        lblStatusUpgrade.setForeground(Color.DARK_GRAY);
+        atas.add(lblStatusUpgrade, BorderLayout.SOUTH);
+
+        root.add(atas, BorderLayout.NORTH);
+        root.add(new JScrollPane(tUpgrade), BorderLayout.CENTER);
+        return root;
+    }
+
+    private void aksiAjukanUpgrade() {
+        PaketUpgrade paket = (PaketUpgrade) cbPaketUpgrade.getSelectedItem();
+        if (paket == null) {
+            UiUtil.error(this, "Tidak ada paket upgrade yang tersedia untuk tier Anda saat ini.");
+            return;
+        }
+        String metode = (String) cbMetodeUpgrade.getSelectedItem();
+        String pesan = String.format("Ajukan upgrade member %s -> %s?%nBiaya  : %s%nMetode : %s%n%n%s",
+                user.getMember(), paket.target, Fmt.rp(paket.biaya), metode,
+                "E-Wallet".equals(metode)
+                        ? "Pembayaran E-Wallet langsung lunas dan tier aktif segera."
+                        : "Pembayaran " + metode + " menunggu konfirmasi admin sebelum tier berubah.");
+        if (!UiUtil.konfirmasi(this, pesan)) return;
+        try {
+            UpgradeMember u = us.ajukanUpgrade(user, paket.target, Pembayaran.dari(metode), LocalDateTime.now());
+            refreshSemua();
+            UiUtil.info(this, u.getStatus() == StatusUpgrade.LUNAS
+                    ? "Upgrade berhasil! Tier member Anda kini " + user.getMember() + " (" + user.getDiskon().getNama() + ")."
+                    : "Pengajuan upgrade " + u.getId() + " dicatat. Menunggu konfirmasi admin.");
+        } catch (IllegalArgumentException | IllegalStateException ex) {
+            refreshSemua();
+            UiUtil.error(this, ex.getMessage());
+        }
+    }
+
+    private void refreshUpgrade() {
+        lblInfoMember.setText("Tier Member Saat Ini: " + user.getMember() + " (" + user.getDiskon().getNama() + ")");
+
+        PaketUpgrade terpilih = (PaketUpgrade) cbPaketUpgrade.getSelectedItem();
+        Member targetSebelumnya = terpilih == null ? null : terpilih.target;
+        cbPaketUpgrade.removeAllItems();
+        List<Member> tersedia = us.getTargetUpgradeTersedia(user.getMember());
+        int indeksPilih = 0;
+        for (int i = 0; i < tersedia.size(); i++) {
+            Member target = tersedia.get(i);
+            cbPaketUpgrade.addItem(new PaketUpgrade(target, us.hitungBiaya(user.getMember(), target)));
+            if (target == targetSebelumnya) indeksPilih = i;
+        }
+        if (cbPaketUpgrade.getItemCount() > 0) cbPaketUpgrade.setSelectedIndex(indeksPilih);
+
+        boolean sudahMaks = tersedia.isEmpty();
+        boolean adaMenunggu = us.adaPengajuanMenunggu(user);
+        boolean bolehAjukan = !sudahMaks && !adaMenunggu;
+        cbPaketUpgrade.setEnabled(bolehAjukan);
+        cbMetodeUpgrade.setEnabled(bolehAjukan);
+        btnAjukanUpgrade.setEnabled(bolehAjukan);
+
+        if (sudahMaks) {
+            lblStatusUpgrade.setText("Anda sudah berada di tier tertinggi (GOLD - Diskon 10%).");
+        } else if (adaMenunggu) {
+            lblStatusUpgrade.setText("Anda memiliki pengajuan upgrade yang sedang menunggu konfirmasi admin.");
+        } else {
+            lblStatusUpgrade.setText("E-Wallet langsung lunas & aktif. Transfer/Tunai menunggu konfirmasi admin.");
+        }
+
+        List<UpgradeMember> data = new java.util.ArrayList<>(us.getPengajuanPelanggan(user));
+        java.util.Collections.reverse(data);
+        UiUtil.isiTabelUpgrade(tUpgrade, mUpgrade, data, false);
+    }
+
     private void refreshRiwayat() {
         List<Booking> data = new java.util.ArrayList<>(bs.getBookingPelanggan(user));
         java.util.Collections.reverse(data);
@@ -300,9 +412,26 @@ public class PelangganFrame extends JFrame {
     }
 
     private void refreshSemua() {
+        us.segarkanPelanggan(user);
+        perbaruiHeader();
         bs.perbaruiStatus(LocalDateTime.now());
         refreshJadwal();
         refreshRiwayat();
+        refreshUpgrade();
+    }
+
+    private static class PaketUpgrade {
+        final Member target;
+        final double biaya;
+
+        PaketUpgrade(Member target, double biaya) {
+            this.target = target;
+            this.biaya = biaya;
+        }
+
+        @Override public String toString() {
+            return target + " (Diskon " + target.getPersen() + "%) - " + Fmt.rp(biaya);
+        }
     }
 
     /** Warna sel jadwal sesuai isinya. */

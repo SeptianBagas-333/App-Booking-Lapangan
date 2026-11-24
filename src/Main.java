@@ -15,10 +15,12 @@ public class Main {
         UserRepository users = new UserRepository(dir);
         LapanganRepository lapangan = new LapanganRepository(dir);
         BookingRepository bookings = new BookingRepository(dir, users, lapangan);
+        UpgradeMemberRepository upgrades = new UpgradeMemberRepository(dir, users);
         BookingService bs = new BookingService(bookings, lapangan, Paths.get("struk"));
+        UpgradeMemberService us = new UpgradeMemberService(upgrades, users);
         AuthService auth = new AuthService(users);
         bs.perbaruiStatus(LocalDateTime.now());   // lazy expiration saat aplikasi dibuka
 
-        SwingUtilities.invokeLater(() -> new LoginFrame(auth, bs).setVisible(true));
+        SwingUtilities.invokeLater(() -> new LoginFrame(auth, bs, us).setVisible(true));
     }
 }

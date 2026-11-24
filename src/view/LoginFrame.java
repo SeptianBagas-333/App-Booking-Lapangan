@@ -4,6 +4,7 @@ import exception.LoginGagalException;
 import model.*;
 import service.AuthService;
 import service.BookingService;
+import service.UpgradeMemberService;
 
 import javax.swing.*;
 import java.awt.*;
@@ -11,13 +12,15 @@ import java.awt.*;
 public class LoginFrame extends JFrame {
     private final AuthService auth;
     private final BookingService bs;
+    private final UpgradeMemberService us;
     private final JTextField tfUser = new JTextField(16);
     private final JPasswordField pfPass = new JPasswordField(16);
 
-    public LoginFrame(AuthService auth, BookingService bs) {
+    public LoginFrame(AuthService auth, BookingService bs, UpgradeMemberService us) {
         super("Sistem Booking Lapangan Olahraga");
         this.auth = auth;
         this.bs = bs;
+        this.us = us;
         setDefaultCloseOperation(EXIT_ON_CLOSE);
 
         JLabel judul = new JLabel("Booking Lapangan Olahraga", SwingConstants.CENTER);
@@ -67,8 +70,8 @@ public class LoginFrame extends JFrame {
             User u = auth.login(tfUser.getText(), new String(pfPass.getPassword()));
             bs.perbaruiStatus(java.time.LocalDateTime.now());
             JFrame next = (u instanceof Admin)
-                    ? new AdminFrame((Admin) u, bs, auth)
-                    : new PelangganFrame((Pelanggan) u, bs, auth);
+                    ? new AdminFrame((Admin) u, bs, us, auth)
+                    : new PelangganFrame((Pelanggan) u, bs, us, auth);
             next.setVisible(true);
             dispose();
         } catch (LoginGagalException ex) {

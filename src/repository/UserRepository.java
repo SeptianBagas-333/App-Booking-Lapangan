@@ -52,4 +52,25 @@ public class UserRepository {
     public String nextId() { return String.format("U%03d", data.size() + 1); }
 
     public void tambah(User u) { data.add(u); simpan(); }
+
+    /** Memperbarui tier member pelanggan dan menyimpannya secara permanen ke users.csv. */
+    public void perbaruiMember(Pelanggan pelanggan, Member tierBaru) {
+        pelanggan.setMember(tierBaru);
+        findById(pelanggan.getId()).ifPresent(u -> {
+            if (u instanceof Pelanggan) ((Pelanggan) u).setMember(tierBaru);
+        });
+        simpan();
+    }
+
+    /** Menyelaraskan ulang tier member terbaru dari users.csv ke data in-memory. */
+    public void sinkronDariFile() {
+        if (!Files.exists(file)) return;
+        for (String[] c : CsvFile.baca(file)) {
+            if (c.length >= 6 && !"ADMIN".equals(c[1])) {
+                findById(c[0]).ifPresent(u -> {
+                    if (u instanceof Pelanggan) ((Pelanggan) u).setMember(Member.valueOf(c[5]));
+                });
+            }
+        }
+    }
 }

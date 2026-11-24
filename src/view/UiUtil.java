@@ -79,6 +79,38 @@ final class UiUtil {
         tabel.getColumnModel().getColumn(kolStatus).setCellRenderer(new StatusRenderer());
     }
 
+    static String infoUpgrade(UpgradeMember u) {
+        if (u.getStatus() == StatusUpgrade.MENUNGGU_KONFIRMASI) return "Menunggu admin mengonfirmasi";
+        if (u.getStatus() == StatusUpgrade.LUNAS)
+            return u.getWaktuSelesai() != null ? "Aktif sejak " + Fmt.waktu(u.getWaktuSelesai()) : "Lunas";
+        if (u.getStatus() == StatusUpgrade.DIBATALKAN)
+            return u.getWaktuSelesai() != null ? "Dibatalkan pada " + Fmt.waktu(u.getWaktuSelesai()) : "Dibatalkan";
+        return "";
+    }
+
+    /** Mengisi tabel pengajuan upgrade member; pilihan baris dipertahankan berdasarkan ID. */
+    static void isiTabelUpgrade(JTable tabel, DefaultTableModel m, List<UpgradeMember> data, boolean admin) {
+        String terpilih = idTerpilih(tabel);
+        String[] kolom = admin
+                ? new String[]{"ID", "Pelanggan", "Dari Tier", "Ke Tier", "Biaya", "Metode", "Status", "Waktu Pengajuan", "Keterangan"}
+                : new String[]{"ID", "Dari Tier", "Ke Tier", "Biaya", "Metode", "Status", "Waktu Pengajuan", "Keterangan"};
+        Object[][] baris = new Object[data.size()][];
+        for (int i = 0; i < data.size(); i++) {
+            UpgradeMember u = data.get(i);
+            if (admin) baris[i] = new Object[]{u.getId(), u.getPelanggan().getNama(), u.getDariTier(), u.getKeTier(),
+                    Fmt.rp(u.getBiaya()), u.getMetode(), u.getStatus(), Fmt.waktu(u.getWaktuPengajuan()), infoUpgrade(u)};
+            else baris[i] = new Object[]{u.getId(), u.getDariTier(), u.getKeTier(),
+                    Fmt.rp(u.getBiaya()), u.getMetode(), u.getStatus(), Fmt.waktu(u.getWaktuPengajuan()), infoUpgrade(u)};
+        }
+        m.setDataVector(baris, kolom);
+        for (int i = 0; i < m.getRowCount() && terpilih != null; i++)
+            if (terpilih.equals(m.getValueAt(i, 0))) { tabel.setRowSelectionInterval(i, i); break; }
+        int kolStatus = admin ? 6 : 5;
+        tabel.getColumnModel().getColumn(kolStatus).setCellRenderer(new StatusRenderer());
+        tabel.getColumnModel().getColumn(kolStatus + 1).setPreferredWidth(130);
+        tabel.getColumnModel().getColumn(kolStatus + 2).setPreferredWidth(240);
+    }
+
     static String idTerpilih(JTable t) {
         int r = t.getSelectedRow();
         return r < 0 ? null : (String) t.getModel().getValueAt(t.convertRowIndexToModel(r), 0);
@@ -92,6 +124,13 @@ final class UiUtil {
                 switch ((StatusBooking) v) {
                     case LUNAS: comp.setBackground(HIJAU); break;
                     case SELESAI: comp.setBackground(BIRU); break;
+                    case DIBATALKAN: comp.setBackground(MERAH); break;
+                    default: comp.setBackground(new Color(255, 235, 156));
+                }
+                comp.setForeground(Color.BLACK);
+            } else if (!sel && v instanceof StatusUpgrade) {
+                switch ((StatusUpgrade) v) {
+                    case LUNAS: comp.setBackground(HIJAU); break;
                     case DIBATALKAN: comp.setBackground(MERAH); break;
                     default: comp.setBackground(new Color(255, 235, 156));
                 }

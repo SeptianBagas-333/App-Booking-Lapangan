@@ -27,7 +27,9 @@ public class GuiSmoke {
         UserRepository ur = new UserRepository(dir);
         LapanganRepository lr = new LapanganRepository(dir);
         BookingRepository br = new BookingRepository(dir, ur, lr);
+        UpgradeMemberRepository upr = new UpgradeMemberRepository(dir, ur);
         BookingService bs = new BookingService(br, lr, dir.resolve("struk"));
+        UpgradeMemberService us = new UpgradeMemberService(upr, ur);
         AuthService auth = new AuthService(ur);
         Pelanggan budi = (Pelanggan) auth.login("budi", "budi123");
         Pelanggan siti = (Pelanggan) auth.login("siti", "siti123");
@@ -38,11 +40,12 @@ public class GuiSmoke {
         Booking b2 = bs.buatBooking(siti, lr.findById("FUT2").get(), besok.atTime(10, 0), 1, now);
         bs.bayar(b2, Pembayaran.dari("Transfer"), now);
         bs.buatBooking(budi, lr.findById("FUT1").get(), besok.atTime(9, 0), 1, now);
+        us.ajukanUpgrade(siti, Member.SILVER, Pembayaran.dari("Transfer"), now);
 
         SwingUtilities.invokeAndWait(() -> {
             try {
-                shot(new LoginFrame(auth, bs), "1_login");
-                PelangganFrame pf = new PelangganFrame(budi, bs, auth);
+                shot(new LoginFrame(auth, bs, us), "1_login");
+                PelangganFrame pf = new PelangganFrame(budi, bs, us, auth);
                 // geser tanggal ke hari ber-booking: klik tombol ">" dua kali
                 JTabbedPane tabs = (JTabbedPane) find(pf.getContentPane(), JTabbedPane.class);
                 JPanel jadwal = (JPanel) tabs.getComponentAt(0);
@@ -51,7 +54,7 @@ public class GuiSmoke {
                 shot(pf, "2_jadwal");
                 tabs.setSelectedIndex(1);
                 shot(pf, "3_riwayat");
-                shot(new AdminFrame((Admin) auth.login("admin", "admin123"), bs, auth), "4_admin");
+                shot(new AdminFrame((Admin) auth.login("admin", "admin123"), bs, us, auth), "4_admin");
             } catch (Exception e) { throw new RuntimeException(e); }
         });
         System.out.println("GUI SMOKE OK");

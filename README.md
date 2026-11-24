@@ -14,9 +14,9 @@ Data tersimpan di folder `data/` (CSV, dibuat otomatis saat pertama jalan). Hapu
 Struk tersimpan di folder `struk/`.
 
 ## Struktur
-- `model` : User (abstract) > Admin/Pelanggan; Lapangan (abstract) > 5 jenis; Booking; interface Pembayaran, Diskon, Cancelable; enum StatusBooking, JenisLapangan, Member
-- `repository` : baca/tulis CSV
-- `service` : AuthService, BookingService (seluruh logika bisnis)
+- `model` : User (abstract) > Admin/Pelanggan; Lapangan (abstract) > 5 jenis; Booking; UpgradeMember; interface Pembayaran, Diskon, Cancelable; enum StatusBooking, StatusUpgrade, JenisLapangan, Member
+- `repository` : baca/tulis CSV (`users.csv`, `lapangan.csv`, `booking.csv`, `upgrade_member.csv`)
+- `service` : AuthService, BookingService, UpgradeMemberService (seluruh logika bisnis)
 - `view` : LoginFrame, PelangganFrame, AdminFrame (Swing)
 - `exception` : 4 custom exception
 
@@ -27,3 +27,7 @@ Struk tersimpan di folder `struk/`.
 - Batas bayar 30 menit (otomatis batal tanpa refund)
 - E-Wallet langsung LUNAS; Transfer/Tunai menunggu konfirmasi admin
 - Refund (hanya booking LUNAS): >=24 jam 100%, 3-24 jam 50%, <3 jam 0%
+- Upgrade member (hanya ke tier lebih tinggi, tidak boleh ganda saat masih menunggu konfirmasi): BIASA -> SILVER Rp50.000, BIASA -> GOLD Rp75.000, SILVER -> GOLD Rp30.000
+- Pembayaran upgrade: E-Wallet langsung LUNAS & tier langsung aktif; Transfer/Tunai menunggu konfirmasi admin
+- Koreksi admin (Batalkan & Downgrade): transaksi upgrade LUNAS terbaru milik pelanggan dapat dibatalkan, tier kembali ke tier asal, dan nominal dihapus dari laporan pendapatan
+- Laporan pendapatan admin menggabungkan pendapatan bersih booking (setelah refund) dan pendapatan upgrade member berstatus LUNAS
