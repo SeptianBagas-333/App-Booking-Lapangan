@@ -1,7 +1,7 @@
 # Sistem Booking Lapangan Olahraga (Java Swing)
 
 Jalankan: `./run.sh` (Linux/Mac) atau `run.bat` (Windows). Butuh JDK 17 ke atas.
-Tes logika: `javac -d out $(find src test -name '*.java') && java -ea -cp out LogicTest`
+Tes logika & GUI smoke: `javac -encoding UTF-8 -d out $(find src test -name '*.java') && java -ea -cp out LogicTest && java -cp out GuiSmoke`
 
 ## Akun demo
 | Role | Username | Password |
@@ -17,7 +17,7 @@ Struk tersimpan di folder `struk/`.
 - `model` : User (abstract) > Admin/Pelanggan; Lapangan (abstract) > 5 jenis; Booking; UpgradeMember; interface Pembayaran, Diskon, Cancelable; enum StatusBooking, StatusUpgrade, JenisLapangan, Member
 - `repository` : baca/tulis CSV (`users.csv`, `lapangan.csv`, `booking.csv`, `upgrade_member.csv`)
 - `service` : AuthService, BookingService, UpgradeMemberService (seluruh logika bisnis)
-- `view` : LoginFrame, PelangganFrame, AdminFrame (Swing)
+- `view` : LoginFrame, PelangganFrame, AdminFrame, UiUtil (Java Swing soft-modern UI, tema terang lintas OS, jendela utama otomatis maximized)
 - `exception` : 4 custom exception
 
 ## Aturan bisnis
