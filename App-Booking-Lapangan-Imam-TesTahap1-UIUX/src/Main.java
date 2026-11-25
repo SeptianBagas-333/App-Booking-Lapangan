@@ -1,0 +1,27 @@
+import repository.*;
+import service.*;
+import view.LoginFrame;
+import view.UiUtil;
+
+import javax.swing.*;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.time.LocalDateTime;
+
+public class Main {
+    public static void main(String[] args) {
+        UiUtil.initTemaTerang();
+
+        Path dir = Paths.get("data");
+        UserRepository users = new UserRepository(dir);
+        LapanganRepository lapangan = new LapanganRepository(dir);
+        BookingRepository bookings = new BookingRepository(dir, users, lapangan);
+        UpgradeMemberRepository upgrades = new UpgradeMemberRepository(dir, users);
+        BookingService bs = new BookingService(bookings, lapangan, Paths.get("struk"));
+        UpgradeMemberService us = new UpgradeMemberService(upgrades, users);
+        AuthService auth = new AuthService(users);
+        bs.perbaruiStatus(LocalDateTime.now());   // lazy expiration saat aplikasi dibuka
+
+        SwingUtilities.invokeLater(() -> UiUtil.tampilkanMaksimal(new LoginFrame(auth, bs, us)));
+    }
+}
