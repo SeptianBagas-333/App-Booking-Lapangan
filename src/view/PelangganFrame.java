@@ -9,19 +9,23 @@ import util.Fmt;
 
 import javax.swing.*;
 import javax.swing.Timer;
-import javax.swing.table.DefaultTableCellRenderer;
+import javax.swing.border.EmptyBorder;
 import javax.swing.table.DefaultTableModel;
 import java.awt.*;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
+import java.awt.event.MouseMotionAdapter;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 
+/** Layar utama pelanggan dengan sidebar navigasi modern, jadwal pastel, riwayat, dan upgrade member. */
 public class PelangganFrame extends JFrame {
     private final Pelanggan user;
     private final BookingService bs;
@@ -29,106 +33,242 @@ public class PelangganFrame extends JFrame {
     private final AuthService auth;
     private final Timer timer;
 
-    private final JLabel lblHeader = new JLabel();
+    private final UiUtil.TablessCardPane pages = new UiUtil.TablessCardPane();
+    private final List<UiUtil.SidebarNavButton> navButtons = new ArrayList<>();
+    private final UiUtil.AppSidebar sidebar;
 
+    // Halaman Jadwal & Booking
     private final JSpinner spTanggal = new JSpinner(new SpinnerDateModel());
     private final JComboBox<JenisLapangan> cbJenis = new JComboBox<>(JenisLapangan.values());
     private final DefaultTableModel mJadwal = UiUtil.modelTabel();
     private final JTable tJadwal = UiUtil.tabel(mJadwal);
+    private final UiUtil.PastelSlotRenderer slotRenderer = new UiUtil.PastelSlotRenderer();
     private List<Lapangan> kolomLapangan;
 
+    // Halaman Riwayat Pemesanan
     private final DefaultTableModel mRiwayat = UiUtil.modelTabel();
     private final JTable tRiwayat = UiUtil.tabel(mRiwayat);
 
-    private final JLabel lblInfoMember = new JLabel();
+    // Halaman Upgrade Member
+    private final UiUtil.PillLabel badgeTierCard;
+    private final JLabel lblDiskonMember = new JLabel();
+    private final JLabel lblStatusUpgrade = new JLabel();
     private final JComboBox<PaketUpgrade> cbPaketUpgrade = new JComboBox<>();
     private final JComboBox<String> cbMetodeUpgrade = new JComboBox<>(Pembayaran.DAFTAR_METODE);
-    private final JButton btnAjukanUpgrade = new JButton("Ajukan Upgrade");
-    private final JLabel lblStatusUpgrade = new JLabel();
+    private final UiUtil.ModernButton btnAjukanUpgrade =
+            new UiUtil.ModernButton("Ajukan Upgrade", UiUtil.ModernButton.Variant.PRIMARY);
     private final DefaultTableModel mUpgrade = UiUtil.modelTabel();
     private final JTable tUpgrade = UiUtil.tabel(mUpgrade);
 
     public PelangganFrame(Pelanggan user, BookingService bs, UpgradeMemberService us, AuthService auth) {
-        super("Pelanggan - " + user.getNama());
+        super("ArenaBook - Pelanggan (" + user.getNama() + ")");
         this.user = user;
         this.bs = bs;
         this.us = us;
         this.auth = auth;
+        this.badgeTierCard = UiUtil.createMemberBadge(user.getMember());
+
         setDefaultCloseOperation(EXIT_ON_CLOSE);
-        setSize(960, 600);
+        setSize(1180, 740);
+        setMinimumSize(new Dimension(920, 620));
         setLocationRelativeTo(null);
 
-        JTabbedPane tabs = new JTabbedPane();
-        tabs.addTab("Cek Jadwal & Booking", buatTabJadwal());
-        tabs.addTab("Riwayat Pemesanan", buatTabRiwayat());
-        tabs.addTab("Upgrade Member", buatTabUpgrade());
-        tabs.addChangeListener(e -> refreshSemua());
-        add(tabs, BorderLayout.CENTER);
-        add(buatHeader(), BorderLayout.NORTH);
+        // Sidebar kiri terang
+        sidebar = new UiUtil.AppSidebar(
+                "Portal Pelanggan",
+                user.getNama(),
+                user.getDiskon().getNama(),
+                UiUtil.createMemberBadge(user.getMember()),
+                this::logout
+        );
 
+        UiUtil.SidebarNavButton navJadwal = new UiUtil.SidebarNavButton("Jadwal & Booking", UiUtil.NavIcon.CALENDAR);
+        UiUtil.SidebarNavButton navRiwayat = new UiUtil.SidebarNavButton("Riwayat Pemesanan", UiUtil.NavIcon.LIST);
+        UiUtil.SidebarNavButton navUpgrade = new UiUtil.SidebarNavButton("Upgrade Member", UiUtil.NavIcon.CROWN);
+        navButtons.add(navJadwal);
+        navButtons.add(navRiwayat);
+        navButtons.add(navUpgrade);
+
+        for (int i = 0; i < navButtons.size(); i++) {
+            final int idx = i;
+            UiUtil.SidebarNavButton btn = navButtons.get(i);
+            btn.addActionListener(e -> pages.setSelectedIndex(idx));
+            sidebar.addNavButton(btn);
+        }
+
+        // Halaman konten utama (TablessCardPane di atas GradientCanvasPanel)
+        pages.addTab("Jadwal & Booking", buatHalamanJadwal());
+        pages.addTab("Riwayat Pemesanan", buatHalamanRiwayat());
+        pages.addTab("Upgrade Member", buatHalamanUpgrade());
+        pages.addChangeListener(e -> {
+            syncSidebarSelection();
+            refreshSemua();
+        });
+
+        UiUtil.GradientCanvasPanel contentHost =
+                new UiUtil.GradientCanvasPanel(UiUtil.BG_CANVAS_START, UiUtil.BG_CANVAS_END, true);
+        contentHost.setLayout(new BorderLayout());
+        contentHost.setBorder(new EmptyBorder(22, 26, 22, 26));
+        contentHost.add(pages, BorderLayout.CENTER);
+
+        JPanel shell = new JPanel(new BorderLayout());
+        shell.add(sidebar, BorderLayout.WEST);
+        shell.add(contentHost, BorderLayout.CENTER);
+        setContentPane(shell);
+
+        syncSidebarSelection();
         refreshSemua();
-        timer = new Timer(30_000, e -> refreshSemua());   // memicu lazy expiration + refresh tampilan & status member
+
+        timer = new Timer(30_000, e -> refreshSemua());
         timer.start();
     }
 
-    private JPanel buatHeader() {
-        JPanel p = new JPanel(new BorderLayout());
-        p.setBorder(BorderFactory.createEmptyBorder(8, 12, 8, 12));
-        lblHeader.setFont(lblHeader.getFont().deriveFont(Font.BOLD));
-        perbaruiHeader();
-        JButton logout = new JButton("Logout");
-        logout.addActionListener(e -> { timer.stop(); dispose(); new LoginFrame(auth, bs, us).setVisible(true); });
-        p.add(lblHeader, BorderLayout.WEST);
-        p.add(logout, BorderLayout.EAST);
-        return p;
+    private void syncSidebarSelection() {
+        int sel = pages.getSelectedIndex();
+        for (int i = 0; i < navButtons.size(); i++) {
+            navButtons.get(i).setActive(i == sel);
+        }
     }
 
-    private void perbaruiHeader() {
-        lblHeader.setText("Halo, " + user.getNama() + "  |  Member: " + user.getMember()
-                + " (" + user.getDiskon().getNama() + ")");
+    private void logout() {
+        timer.stop();
+        dispose();
+        UiUtil.tampilkanMaksimal(new LoginFrame(auth, bs, us));
     }
 
-    // ================= TAB JADWAL =================
-    private JPanel buatTabJadwal() {
-        JPanel root = new JPanel(new BorderLayout());
+    private void perbaruiInfoMember() {
+        UiUtil.updateMemberBadge(sidebar.getRoleBadge(), user.getMember());
+        sidebar.setAccountSubtitle(user.getDiskon().getNama());
+        UiUtil.updateMemberBadge(badgeTierCard, user.getMember());
+        lblDiskonMember.setText("Benefit aktif: " + user.getDiskon().getNama());
+    }
 
+    // ================= HALAMAN 1: JADWAL & BOOKING =================
+    private JPanel buatHalamanJadwal() {
+        JPanel root = new JPanel(new BorderLayout(0, 14));
+        root.setOpaque(false);
+
+        JPanel header = UiUtil.createPageHeader(
+                "Jadwal & Booking",
+                "Pilih slot kosong berwarna hijau untuk membuat reservasi lapangan.",
+                UiUtil.createAutoRefreshBadge()
+        );
+
+        // Toolbar filter dalam ShadowCardPanel
         spTanggal.setEditor(new JSpinner.DateEditor(spTanggal, "dd-MM-yyyy"));
         spTanggal.setValue(new Date());
-        JButton prev = new JButton("<"), next = new JButton(">");
+        UiUtil.styleDateSpinner(spTanggal);
+        UiUtil.styleComboBox(cbJenis);
+
+        UiUtil.ModernButton prev = new UiUtil.ModernButton("<", UiUtil.ModernButton.Variant.SECONDARY, 9);
+        UiUtil.ModernButton next = new UiUtil.ModernButton(">", UiUtil.ModernButton.Variant.SECONDARY, 9);
+        prev.setPreferredSize(new Dimension(40, 38));
+        next.setPreferredSize(new Dimension(40, 38));
+        prev.setBorder(new EmptyBorder(0, 0, 0, 0));
+        next.setBorder(new EmptyBorder(0, 0, 0, 0));
+
+        UiUtil.ModernButton btnRefresh = new UiUtil.ModernButton("Refresh", UiUtil.ModernButton.Variant.SECONDARY);
+        btnRefresh.setPreferredSize(new Dimension(96, 38));
+
         prev.addActionListener(e -> geserTanggal(-1));
         next.addActionListener(e -> geserTanggal(1));
         spTanggal.addChangeListener(e -> refreshJadwal());
         cbJenis.addActionListener(e -> refreshJadwal());
+        btnRefresh.addActionListener(e -> refreshSemua());
 
-        JPanel atas = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 8));
-        atas.add(new JLabel("Tanggal:")); atas.add(prev); atas.add(spTanggal); atas.add(next);
-        atas.add(Box.createHorizontalStrut(16));
-        atas.add(new JLabel("Olahraga:")); atas.add(cbJenis);
+        UiUtil.ShadowCardPanel filterCard = new UiUtil.ShadowCardPanel(14, 6);
+        filterCard.setLayout(new BorderLayout(12, 0));
+        filterCard.setContentPadding(10, 14, 10, 14);
 
+        JPanel filterLeft = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 0));
+        filterLeft.setOpaque(false);
+        JLabel lblTgl = new JLabel("Tanggal:");
+        lblTgl.setFont(UiUtil.fontLabel(13f));
+        lblTgl.setForeground(UiUtil.TEXT_BODY);
+        JLabel lblSport = new JLabel("Olahraga:");
+        lblSport.setFont(UiUtil.fontLabel(13f));
+        lblSport.setForeground(UiUtil.TEXT_BODY);
+
+        filterLeft.add(lblTgl);
+        filterLeft.add(prev);
+        filterLeft.add(spTanggal);
+        filterLeft.add(next);
+        filterLeft.add(Box.createHorizontalStrut(14));
+        filterLeft.add(lblSport);
+        filterLeft.add(cbJenis);
+
+        JPanel filterRight = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+        filterRight.setOpaque(false);
+        filterRight.add(btnRefresh);
+
+        filterCard.add(filterLeft, BorderLayout.WEST);
+        filterCard.add(filterRight, BorderLayout.EAST);
+
+        // Tabel jadwal pastel dalam ShadowCardPanel
+        tJadwal.setRowHeight(38);
         tJadwal.setCellSelectionEnabled(true);
-        tJadwal.setDefaultRenderer(Object.class, new JadwalRenderer());
+        tJadwal.setRowSelectionAllowed(false);
+        tJadwal.setShowHorizontalLines(true);
+        tJadwal.setShowVerticalLines(false);
+        tJadwal.setDefaultRenderer(Object.class, slotRenderer);
+        tJadwal.addMouseMotionListener(new MouseMotionAdapter() {
+            @Override public void mouseMoved(MouseEvent e) {
+                int r = tJadwal.rowAtPoint(e.getPoint());
+                int c = tJadwal.columnAtPoint(e.getPoint());
+                slotRenderer.setHoveredCell(r, c);
+                boolean clickable = r >= 0 && c >= 1 && "Kosong".equals(mJadwal.getValueAt(r, c));
+                tJadwal.setCursor(Cursor.getPredefinedCursor(clickable ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
+                tJadwal.repaint();
+            }
+        });
         tJadwal.addMouseListener(new MouseAdapter() {
+            @Override public void mouseExited(MouseEvent e) {
+                slotRenderer.setHoveredCell(-1, -1);
+                tJadwal.setCursor(Cursor.getDefaultCursor());
+                tJadwal.repaint();
+            }
             @Override public void mouseClicked(MouseEvent e) { klikSel(); }
         });
 
-        JPanel legenda = new JPanel(new FlowLayout(FlowLayout.LEFT, 12, 6));
-        legenda.add(kotak(UiUtil.HIJAU, "Kosong (klik untuk booking)"));
-        legenda.add(kotak(UiUtil.MERAH, "Terisi"));
-        legenda.add(kotak(UiUtil.BIRU, "Booking Anda"));
-        legenda.add(kotak(UiUtil.ABU, "Tidak tersedia"));
-        legenda.add(new JLabel("   Tarif jam sibuk 17.00-22.00 x1,25 | Sabtu-Minggu x1,15"));
+        JScrollPane spJadwal = new JScrollPane(tJadwal);
+        UiUtil.styleScrollPane(spJadwal);
 
-        root.add(atas, BorderLayout.NORTH);
-        root.add(new JScrollPane(tJadwal), BorderLayout.CENTER);
-        root.add(legenda, BorderLayout.SOUTH);
+        // Legenda warna berbentuk chip rapi + catatan tarif
+        JPanel legenda = new JPanel(new BorderLayout(10, 0));
+        legenda.setOpaque(false);
+        legenda.setBorder(new EmptyBorder(10, 2, 0, 2));
+
+        JPanel chips = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
+        chips.setOpaque(false);
+        chips.add(new UiUtil.PillLabel("Kosong (klik untuk booking)", UiUtil.BADGE_GREEN_BG, UiUtil.BADGE_GREEN_ACCENT, UiUtil.BADGE_GREEN_TEXT, true));
+        chips.add(new UiUtil.PillLabel("Terisi", UiUtil.BADGE_RED_BG, UiUtil.BADGE_RED_ACCENT, UiUtil.BADGE_RED_TEXT, true));
+        chips.add(new UiUtil.PillLabel("Booking Anda", UiUtil.BADGE_BLUE_BG, UiUtil.BADGE_BLUE_ACCENT, UiUtil.BADGE_BLUE_TEXT, true));
+        chips.add(new UiUtil.PillLabel("Tidak Tersedia", UiUtil.BADGE_GRAY_BG, UiUtil.BADGE_GRAY_ACCENT, UiUtil.BADGE_GRAY_TEXT, true));
+
+        JLabel tarifNote = new JLabel("Jam sibuk 17.00-22.00 (x1,25)  |  Sabtu-Minggu (x1,15)");
+        tarifNote.setFont(UiUtil.fontBody(12f));
+        tarifNote.setForeground(UiUtil.TEXT_MUTED);
+        JPanel noteWrap = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 5));
+        noteWrap.setOpaque(false);
+        noteWrap.add(tarifNote);
+
+        legenda.add(chips, BorderLayout.WEST);
+        legenda.add(noteWrap, BorderLayout.EAST);
+
+        UiUtil.ShadowCardPanel tableCard = new UiUtil.ShadowCardPanel(16, 7);
+        tableCard.setLayout(new BorderLayout(0, 4));
+        tableCard.setContentPadding(14, 14, 12, 14);
+        tableCard.add(spJadwal, BorderLayout.CENTER);
+        tableCard.add(legenda, BorderLayout.SOUTH);
+
+        JPanel topStack = new JPanel(new BorderLayout(0, 12));
+        topStack.setOpaque(false);
+        topStack.add(header, BorderLayout.NORTH);
+        topStack.add(filterCard, BorderLayout.SOUTH);
+
+        root.add(topStack, BorderLayout.NORTH);
+        root.add(tableCard, BorderLayout.CENTER);
         return root;
-    }
-
-    private JLabel kotak(Color c, String teks) {
-        JLabel l = new JLabel("  " + teks + "  ");
-        l.setOpaque(true);
-        l.setBackground(c);
-        return l;
     }
 
     private LocalDate tanggalDipilih() {
@@ -163,7 +303,8 @@ public class PelangganFrame extends JFrame {
             }
         }
         mJadwal.setDataVector(data, kolom);
-        tJadwal.getColumnModel().getColumn(0).setPreferredWidth(120);
+        tJadwal.getColumnModel().getColumn(0).setPreferredWidth(128);
+        tJadwal.getColumnModel().getColumn(0).setMaxWidth(150);
     }
 
     private void klikSel() {
@@ -177,63 +318,187 @@ public class PelangganFrame extends JFrame {
 
     private void dialogBooking(Lapangan l, LocalDateTime mulai) {
         us.segarkanPelanggan(user);
-        perbaruiHeader();
-        // durasi maksimum: sampai slot berikutnya terisi / tutup / batas 3 jam
+        perbaruiInfoMember();
+
         int maks = 0;
         for (int d = 1; d <= BookingService.MAKS_DURASI; d++) {
             if (mulai.getHour() + d > BookingService.JAM_TUTUP) break;
             if (!bs.isSlotTersedia(l, mulai, d)) break;
             maks = d;
         }
+        if (maks == 0) {
+            UiUtil.error(this, "Slot sudah tidak tersedia.");
+            refreshSemua();
+            return;
+        }
+
         Integer[] pilihan = new Integer[maks];
         for (int i = 0; i < maks; i++) pilihan[i] = i + 1;
         JComboBox<Integer> cbDurasi = new JComboBox<>(pilihan);
-        JTextArea rincian = new JTextArea(7, 30);
-        rincian.setEditable(false);
-        rincian.setBackground(new Color(245, 245, 245));
+        UiUtil.styleComboBox(cbDurasi);
+        cbDurasi.setPreferredSize(new Dimension(110, 36));
+
+        JLabel valJam = new JLabel();
+        JLabel valSewa = new JLabel();
+        JLabel valDiskon = new JLabel();
+        JLabel valTotal = new JLabel();
+        valTotal.setFont(UiUtil.fontHeading(17f));
+        valTotal.setForeground(UiUtil.PRIMARY_END);
+
         Runnable update = () -> {
             int d = (Integer) cbDurasi.getSelectedItem();
             BookingService.Rincian r = bs.hitungRincian(l, mulai, d, user);
-            rincian.setText(String.format(
-                    "Lapangan : %s (%s)%nTanggal  : %s%nJam      : %s - %s%n%nBiaya sewa : %s%nDiskon (%s) : -%s%nTOTAL      : %s",
-                    l.getNama(), l.getJenis(), mulai.format(Fmt.TANGGAL), mulai.format(Fmt.JAM),
-                    mulai.plusHours(d).format(Fmt.JAM), Fmt.rp(r.sewa), r.namaDiskon, Fmt.rp(r.diskon), Fmt.rp(r.total)));
+            valJam.setText(mulai.format(Fmt.JAM) + " - " + mulai.plusHours(d).format(Fmt.JAM) + " (" + d + " jam)");
+            valSewa.setText(Fmt.rp(r.sewa));
+            valDiskon.setText("-" + Fmt.rp(r.diskon) + "  (" + r.namaDiskon + ")");
+            valTotal.setText(Fmt.rp(r.total));
         };
         cbDurasi.addActionListener(e -> update.run());
         update.run();
 
-        JPanel p = new JPanel(new BorderLayout(6, 6));
-        JPanel atas = new JPanel(new FlowLayout(FlowLayout.LEFT));
-        atas.add(new JLabel("Durasi (jam):")); atas.add(cbDurasi);
-        if (!l.getKeterangan().isEmpty()) atas.add(new JLabel("  (" + l.getKeterangan() + ")"));
-        p.add(atas, BorderLayout.NORTH);
-        p.add(rincian, BorderLayout.CENTER);
+        JPanel content = new JPanel();
+        content.setOpaque(false);
+        content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
+        JComponent widthGuide = new Box.Filler(new Dimension(430, 0), new Dimension(430, 0), new Dimension(430, 0));
+        widthGuide.setAlignmentX(Component.LEFT_ALIGNMENT);
+        content.add(widthGuide);
 
-        if (JOptionPane.showConfirmDialog(this, p, "Booking Lapangan", JOptionPane.OK_CANCEL_OPTION) != JOptionPane.OK_OPTION)
-            return;
+        JPanel durasiRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+        durasiRow.setOpaque(false);
+        durasiRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+        JLabel lblDurasi = new JLabel("Durasi Bermain (jam):");
+        lblDurasi.setFont(UiUtil.fontLabel(13f));
+        lblDurasi.setForeground(UiUtil.TEXT_BODY);
+        durasiRow.add(lblDurasi);
+        durasiRow.add(cbDurasi);
+
+        JPanel summaryBox = new JPanel(new GridBagLayout());
+        summaryBox.setBackground(UiUtil.SURFACE_SIDEBAR);
+        summaryBox.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(UiUtil.BORDER_SUBTLE, 1, true),
+                new EmptyBorder(14, 16, 14, 16)
+        ));
+        summaryBox.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        addSummaryRow(summaryBox, 0, "Lapangan", l.getNama() + " (" + l.getJenis() + ")", false);
+        addSummaryRow(summaryBox, 1, "Tanggal", mulai.format(Fmt.TANGGAL), false);
+        addSummaryRow(summaryBox, 2, "Waktu", valJam, false);
+        addSummaryRow(summaryBox, 3, "Biaya Sewa", valSewa, false);
+        addSummaryRow(summaryBox, 4, "Diskon", valDiskon, false);
+        addSummaryRow(summaryBox, 5, "Total Bayar", valTotal, true);
+
+        content.add(durasiRow);
+        if (!l.getKeterangan().isEmpty()) {
+            JLabel ket = new JLabel("Catatan lapangan: " + l.getKeterangan());
+            ket.setFont(UiUtil.fontBody(12f));
+            ket.setForeground(UiUtil.TEXT_MUTED);
+            ket.setBorder(new EmptyBorder(6, 10, 0, 0));
+            ket.setAlignmentX(Component.LEFT_ALIGNMENT);
+            content.add(ket);
+        }
+        content.add(Box.createVerticalStrut(12));
+        content.add(summaryBox);
+
+        boolean ok = UiUtil.showFormDialog(
+                this,
+                "Buat Booking Lapangan",
+                "Periksa estimasi biaya sebelum mengonfirmasi reservasi.",
+                content,
+                "Buat Booking",
+                UiUtil.ModernButton.Variant.PRIMARY
+        );
+        if (!ok) return;
+
         try {
             Booking b = bs.buatBooking(user, l, mulai, (Integer) cbDurasi.getSelectedItem(), LocalDateTime.now());
             refreshSemua();
-            if (UiUtil.konfirmasi(this, "Booking " + b.getId() + " dibuat (Menunggu Bayar).\nBayar sekarang? "
-                    + "Batas bayar " + b.getBatasBayar().format(Fmt.JAM) + "."))
+            if (UiUtil.konfirmasi(this, "Booking " + b.getId() + " berhasil dibuat (Menunggu Bayar).\nBayar sekarang? "
+                    + "Batas pembayaran pukul " + b.getBatasBayar().format(Fmt.JAM) + ".")) {
                 dialogBayar(b);
+            }
         } catch (JadwalBentrokException | IllegalArgumentException ex) {
             UiUtil.error(this, ex.getMessage());
             refreshSemua();
         }
     }
 
-    // ================= TAB RIWAYAT =================
-    private JPanel buatTabRiwayat() {
-        JPanel root = new JPanel(new BorderLayout());
-        JButton bayar = new JButton("Bayar"), batal = new JButton("Batalkan"),
-                struk = new JButton("Cetak Struk"), refresh = new JButton("Refresh");
-        bayar.addActionListener(e -> aksiBayar());
-        batal.addActionListener(e -> aksiBatal());
-        struk.addActionListener(e -> aksiStruk());
-        refresh.addActionListener(e -> refreshSemua());
-        root.add(UiUtil.panelTombol(bayar, batal, struk, refresh), BorderLayout.NORTH);
-        root.add(new JScrollPane(tRiwayat), BorderLayout.CENTER);
+    private void addSummaryRow(JPanel box, int row, String label, Object value, boolean highlight) {
+        GridBagConstraints g = new GridBagConstraints();
+        g.gridy = row;
+        g.insets = new Insets(highlight ? 8 : 3, 0, 3, 12);
+        g.anchor = GridBagConstraints.WEST;
+        g.gridx = 0;
+        g.weightx = 0.4;
+        JLabel l = new JLabel(label);
+        l.setFont(highlight ? UiUtil.fontLabel(13.5f) : UiUtil.fontBody(13f));
+        l.setForeground(highlight ? UiUtil.TEXT_HEADING : UiUtil.TEXT_MUTED);
+        box.add(l, g);
+
+        g.gridx = 1;
+        g.weightx = 0.6;
+        g.anchor = GridBagConstraints.EAST;
+        g.insets = new Insets(highlight ? 8 : 3, 0, 3, 0);
+        JLabel v = (value instanceof JLabel) ? (JLabel) value : new JLabel(String.valueOf(value));
+        if (!highlight) {
+            v.setFont(UiUtil.fontLabel(13f));
+            v.setForeground(UiUtil.TEXT_HEADING);
+        }
+        box.add(v, g);
+    }
+
+    // ================= HALAMAN 2: RIWAYAT PEMESANAN =================
+    private JPanel buatHalamanRiwayat() {
+        JPanel root = new JPanel(new BorderLayout(0, 14));
+        root.setOpaque(false);
+
+        JPanel header = UiUtil.createPageHeader(
+                "Riwayat Pemesanan",
+                "Pantau status booking, selesaikan pembayaran, atau cetak struk resmi.",
+                UiUtil.createAutoRefreshBadge()
+        );
+
+        UiUtil.ModernButton btnBayar = new UiUtil.ModernButton("Bayar", UiUtil.ModernButton.Variant.PRIMARY);
+        UiUtil.ModernButton btnStruk = new UiUtil.ModernButton("Cetak Struk", UiUtil.ModernButton.Variant.SECONDARY);
+        UiUtil.ModernButton btnBatal = new UiUtil.ModernButton("Batalkan", UiUtil.ModernButton.Variant.DANGER_SOFT);
+        UiUtil.ModernButton btnRefresh = new UiUtil.ModernButton("Refresh", UiUtil.ModernButton.Variant.SECONDARY);
+
+        btnBayar.addActionListener(e -> aksiBayar());
+        btnStruk.addActionListener(e -> aksiStruk());
+        btnBatal.addActionListener(e -> aksiBatal());
+        btnRefresh.addActionListener(e -> refreshSemua());
+
+        UiUtil.ShadowCardPanel actionCard = new UiUtil.ShadowCardPanel(14, 6);
+        actionCard.setLayout(new BorderLayout());
+        actionCard.setContentPadding(10, 14, 10, 14);
+
+        JPanel leftActions = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+        leftActions.setOpaque(false);
+        leftActions.add(btnBayar);
+        leftActions.add(btnStruk);
+        leftActions.add(btnBatal);
+
+        JPanel rightActions = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 0));
+        rightActions.setOpaque(false);
+        rightActions.add(btnRefresh);
+
+        actionCard.add(leftActions, BorderLayout.WEST);
+        actionCard.add(rightActions, BorderLayout.EAST);
+
+        JScrollPane spRiwayat = new JScrollPane(tRiwayat);
+        UiUtil.styleScrollPane(spRiwayat);
+
+        UiUtil.ShadowCardPanel tableCard = new UiUtil.ShadowCardPanel(16, 7);
+        tableCard.setLayout(new BorderLayout());
+        tableCard.setContentPadding(14, 14, 14, 14);
+        tableCard.add(spRiwayat, BorderLayout.CENTER);
+
+        JPanel topStack = new JPanel(new BorderLayout(0, 12));
+        topStack.setOpaque(false);
+        topStack.add(header, BorderLayout.NORTH);
+        topStack.add(actionCard, BorderLayout.SOUTH);
+
+        root.add(topStack, BorderLayout.NORTH);
+        root.add(tableCard, BorderLayout.CENTER);
         return root;
     }
 
@@ -256,19 +521,69 @@ public class PelangganFrame extends JFrame {
     }
 
     private void dialogBayar(Booking b) {
-        JComboBox<String> cb = new JComboBox<>(Pembayaran.DAFTAR_METODE);
-        Object[] isi = {String.format("Booking %s - %s%n%s %s-%s%nDiskon : -%s%nTOTAL  : %s",
-                b.getId(), b.getLapangan().getNama(), b.getMulai().format(Fmt.TANGGAL),
-                b.getMulai().format(Fmt.JAM), b.getSelesai().format(Fmt.JAM),
-                Fmt.rp(b.getDiskon()), Fmt.rp(b.getTotal())),
-                "Metode pembayaran:", cb,
-                "E-Wallet langsung lunas. Transfer/Tunai menunggu konfirmasi admin."};
-        if (JOptionPane.showConfirmDialog(this, isi, "Pembayaran", JOptionPane.OK_CANCEL_OPTION) != JOptionPane.OK_OPTION) return;
+        JComboBox<String> cbMetode = new JComboBox<>(Pembayaran.DAFTAR_METODE);
+        UiUtil.styleComboBox(cbMetode);
+        cbMetode.setPreferredSize(new Dimension(200, 38));
+
+        JPanel content = new JPanel();
+        content.setOpaque(false);
+        content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
+        JComponent widthGuide = new Box.Filler(new Dimension(430, 0), new Dimension(430, 0), new Dimension(430, 0));
+        widthGuide.setAlignmentX(Component.LEFT_ALIGNMENT);
+        content.add(widthGuide);
+
+        JPanel infoBox = new JPanel(new GridBagLayout());
+        infoBox.setBackground(UiUtil.SURFACE_SIDEBAR);
+        infoBox.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(UiUtil.BORDER_SUBTLE, 1, true),
+                new EmptyBorder(12, 16, 12, 16)
+        ));
+        infoBox.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        addSummaryRow(infoBox, 0, "ID Booking", b.getId(), false);
+        addSummaryRow(infoBox, 1, "Lapangan", b.getLapangan().getNama(), false);
+        addSummaryRow(infoBox, 2, "Jadwal", b.getMulai().format(Fmt.TANGGAL) + "  " + b.getMulai().format(Fmt.JAM) + "-" + b.getSelesai().format(Fmt.JAM), false);
+        addSummaryRow(infoBox, 3, "Diskon", "-" + Fmt.rp(b.getDiskon()), false);
+        JLabel lblTot = new JLabel(Fmt.rp(b.getTotal()));
+        lblTot.setFont(UiUtil.fontHeading(16f));
+        lblTot.setForeground(UiUtil.PRIMARY_END);
+        addSummaryRow(infoBox, 4, "Total Bayar", lblTot, true);
+
+        JPanel metodeRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+        metodeRow.setOpaque(false);
+        metodeRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+        JLabel lblMetode = new JLabel("Metode Pembayaran:");
+        lblMetode.setFont(UiUtil.fontLabel(13f));
+        lblMetode.setForeground(UiUtil.TEXT_BODY);
+        metodeRow.add(lblMetode);
+        metodeRow.add(cbMetode);
+
+        JLabel note = new JLabel("E-Wallet langsung lunas. Transfer/Tunai menunggu konfirmasi admin.");
+        note.setFont(UiUtil.fontBody(12f));
+        note.setForeground(UiUtil.TEXT_MUTED);
+        note.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        content.add(infoBox);
+        content.add(Box.createVerticalStrut(12));
+        content.add(metodeRow);
+        content.add(Box.createVerticalStrut(8));
+        content.add(note);
+
+        boolean ok = UiUtil.showFormDialog(
+                this,
+                "Pembayaran Booking",
+                "Pilih metode pembayaran untuk menyelesaikan pesanan.",
+                content,
+                "Bayar Sekarang",
+                UiUtil.ModernButton.Variant.PRIMARY
+        );
+        if (!ok) return;
+
         try {
-            bs.bayar(b, Pembayaran.dari((String) cb.getSelectedItem()), LocalDateTime.now());
+            bs.bayar(b, Pembayaran.dari((String) cbMetode.getSelectedItem()), LocalDateTime.now());
             refreshSemua();
             UiUtil.info(this, b.getStatus() == StatusBooking.LUNAS
-                    ? "Pembayaran berhasil. Booking LUNAS."
+                    ? "Pembayaran berhasil. Booking berstatus LUNAS."
                     : "Pembayaran dicatat. Menunggu konfirmasi admin.");
         } catch (BatasBayarLewatException | IllegalStateException ex) {
             refreshSemua();
@@ -286,11 +601,12 @@ public class PelangganFrame extends JFrame {
             UiUtil.error(this, "Booking ini tidak dapat dibatalkan (status: " + b.getStatus() + ").");
             return;
         }
-        String pesan = "Batalkan booking " + b.getId() + "?";
-        if (b.getStatus() == StatusBooking.LUNAS)
-            pesan += "\nRefund yang Anda terima: " + Fmt.rp(b.hitungRefund(now))
+        String pesan = "Batalkan booking " + b.getId() + " (" + b.getLapangan().getNama() + ")?";
+        if (b.getStatus() == StatusBooking.LUNAS) {
+            pesan += "\n\nEstimasi refund: " + Fmt.rp(b.hitungRefund(now))
                     + "\n(>=24 jam: 100%, 3-24 jam: 50%, <3 jam: 0%)";
-        if (!UiUtil.konfirmasi(this, pesan)) return;
+        }
+        if (!UiUtil.konfirmasiDanger(this, "Batalkan Booking", pesan, "Ya, Batalkan")) return;
         try {
             double refund = bs.batalkan(b, LocalDateTime.now());
             refreshSemua();
@@ -308,40 +624,133 @@ public class PelangganFrame extends JFrame {
             Path f = bs.cetakStruk(b);
             JTextArea ta = new JTextArea(bs.buatTeksStruk(b));
             ta.setFont(new Font(Font.MONOSPACED, Font.PLAIN, 13));
+            ta.setForeground(UiUtil.TEXT_HEADING);
+            ta.setBackground(UiUtil.SURFACE_SIDEBAR);
             ta.setEditable(false);
-            JOptionPane.showMessageDialog(this, ta, "Struk disimpan: " + f, JOptionPane.PLAIN_MESSAGE);
+            ta.setBorder(new EmptyBorder(14, 16, 14, 16));
+
+            JScrollPane sp = new JScrollPane(ta);
+            UiUtil.styleScrollPane(sp);
+            sp.setPreferredSize(new Dimension(450, 320));
+
+            UiUtil.showPreviewDialog(this, "Pratinjau Struk Booking", "Tersimpan di: " + f, sp);
         } catch (IllegalStateException | IOException ex) {
             UiUtil.error(this, ex.getMessage());
         }
     }
 
-    // ================= TAB UPGRADE MEMBER =================
-    private JPanel buatTabUpgrade() {
-        JPanel root = new JPanel(new BorderLayout(0, 8));
+    // ================= HALAMAN 3: UPGRADE MEMBER =================
+    private JPanel buatHalamanUpgrade() {
+        JPanel root = new JPanel(new BorderLayout(0, 14));
+        root.setOpaque(false);
 
-        JPanel atas = new JPanel(new BorderLayout(0, 4));
-        atas.setBorder(BorderFactory.createEmptyBorder(8, 10, 4, 10));
+        JPanel header = UiUtil.createPageHeader(
+                "Upgrade Member",
+                "Tingkatkan tier member untuk menikmati diskon otomatis pada setiap booking.",
+                UiUtil.createAutoRefreshBadge()
+        );
 
-        lblInfoMember.setFont(lblInfoMember.getFont().deriveFont(Font.BOLD, 13f));
-        atas.add(lblInfoMember, BorderLayout.NORTH);
+        // Kartu ringkasan tier member saat ini
+        UiUtil.ShadowCardPanel statusCard = new UiUtil.ShadowCardPanel(16, 6);
+        statusCard.setLayout(new BorderLayout(16, 6));
+        statusCard.setContentPadding(16, 20, 16, 20);
 
-        JPanel form = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 4));
-        JButton refresh = new JButton("Refresh");
+        JPanel statusLeft = new JPanel();
+        statusLeft.setOpaque(false);
+        statusLeft.setLayout(new BoxLayout(statusLeft, BoxLayout.Y_AXIS));
+
+        JPanel tierRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 10, 0));
+        tierRow.setOpaque(false);
+        tierRow.setAlignmentX(Component.LEFT_ALIGNMENT);
+        JLabel lblCap = new JLabel("Tier Member Saat Ini:");
+        lblCap.setFont(UiUtil.fontHeading(16f));
+        lblCap.setForeground(UiUtil.TEXT_HEADING);
+        tierRow.add(lblCap);
+        tierRow.add(badgeTierCard);
+
+        lblDiskonMember.setFont(UiUtil.fontLabel(13f));
+        lblDiskonMember.setForeground(UiUtil.PRIMARY_END);
+        lblDiskonMember.setBorder(new EmptyBorder(4, 10, 0, 0));
+        lblDiskonMember.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        lblStatusUpgrade.setFont(UiUtil.fontBody(12.5f));
+        lblStatusUpgrade.setForeground(UiUtil.TEXT_MUTED);
+        lblStatusUpgrade.setBorder(new EmptyBorder(4, 10, 0, 0));
+        lblStatusUpgrade.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        statusLeft.add(tierRow);
+        statusLeft.add(lblDiskonMember);
+        statusLeft.add(lblStatusUpgrade);
+
+        statusCard.add(statusLeft, BorderLayout.CENTER);
+
+        // Kartu form pengajuan upgrade
+        UiUtil.styleComboBox(cbPaketUpgrade);
+        cbPaketUpgrade.setPreferredSize(new Dimension(225, 38));
+        UiUtil.styleComboBox(cbMetodeUpgrade);
+        cbMetodeUpgrade.setPreferredSize(new Dimension(122, 38));
+
+        UiUtil.ModernButton btnRefresh = new UiUtil.ModernButton("Refresh", UiUtil.ModernButton.Variant.SECONDARY);
         btnAjukanUpgrade.addActionListener(e -> aksiAjukanUpgrade());
-        refresh.addActionListener(e -> refreshSemua());
-        form.add(new JLabel("Paket Upgrade:"));
-        form.add(cbPaketUpgrade);
-        form.add(new JLabel("Metode:"));
-        form.add(cbMetodeUpgrade);
-        form.add(btnAjukanUpgrade);
-        form.add(refresh);
-        atas.add(form, BorderLayout.CENTER);
+        btnRefresh.addActionListener(e -> refreshSemua());
 
-        lblStatusUpgrade.setForeground(Color.DARK_GRAY);
-        atas.add(lblStatusUpgrade, BorderLayout.SOUTH);
+        UiUtil.ShadowCardPanel formCard = new UiUtil.ShadowCardPanel(16, 6);
+        formCard.setLayout(new BorderLayout(8, 0));
+        formCard.setContentPadding(12, 14, 12, 14);
 
-        root.add(atas, BorderLayout.NORTH);
-        root.add(new JScrollPane(tUpgrade), BorderLayout.CENTER);
+        JPanel formLeft = new JPanel(new FlowLayout(FlowLayout.LEFT, 8, 2));
+        formLeft.setOpaque(false);
+        JLabel lblPaket = new JLabel("Paket:");
+        lblPaket.setFont(UiUtil.fontLabel(13f));
+        lblPaket.setForeground(UiUtil.TEXT_BODY);
+        JLabel lblMet = new JLabel("Metode:");
+        lblMet.setFont(UiUtil.fontLabel(13f));
+        lblMet.setForeground(UiUtil.TEXT_BODY);
+
+        formLeft.add(lblPaket);
+        formLeft.add(cbPaketUpgrade);
+        formLeft.add(Box.createHorizontalStrut(4));
+        formLeft.add(lblMet);
+        formLeft.add(cbMetodeUpgrade);
+        formLeft.add(Box.createHorizontalStrut(4));
+        formLeft.add(btnAjukanUpgrade);
+
+        JPanel formRight = new JPanel(new FlowLayout(FlowLayout.RIGHT, 0, 2));
+        formRight.setOpaque(false);
+        formRight.add(btnRefresh);
+
+        formCard.add(formLeft, BorderLayout.WEST);
+        formCard.add(formRight, BorderLayout.EAST);
+
+        // Kartu tabel riwayat pengajuan upgrade
+        JLabel lblRiwayatUp = new JLabel("Riwayat Pengajuan Upgrade");
+        lblRiwayatUp.setFont(UiUtil.fontHeading(15f));
+        lblRiwayatUp.setForeground(UiUtil.TEXT_HEADING);
+        lblRiwayatUp.setBorder(new EmptyBorder(0, 2, 10, 0));
+
+        JScrollPane spUpgrade = new JScrollPane(tUpgrade);
+        UiUtil.styleScrollPane(spUpgrade);
+
+        UiUtil.ShadowCardPanel tableCard = new UiUtil.ShadowCardPanel(16, 7);
+        tableCard.setLayout(new BorderLayout());
+        tableCard.setContentPadding(14, 16, 14, 16);
+        tableCard.add(lblRiwayatUp, BorderLayout.NORTH);
+        tableCard.add(spUpgrade, BorderLayout.CENTER);
+
+        JPanel topStack = new JPanel();
+        topStack.setOpaque(false);
+        topStack.setLayout(new BoxLayout(topStack, BoxLayout.Y_AXIS));
+        header.setAlignmentX(Component.LEFT_ALIGNMENT);
+        statusCard.setAlignmentX(Component.LEFT_ALIGNMENT);
+        formCard.setAlignmentX(Component.LEFT_ALIGNMENT);
+        topStack.add(header);
+        topStack.add(Box.createVerticalStrut(12));
+        topStack.add(statusCard);
+        topStack.add(Box.createVerticalStrut(10));
+        topStack.add(formCard);
+
+        root.add(topStack, BorderLayout.NORTH);
+        root.add(tableCard, BorderLayout.CENTER);
         return root;
     }
 
@@ -371,8 +780,6 @@ public class PelangganFrame extends JFrame {
     }
 
     private void refreshUpgrade() {
-        lblInfoMember.setText("Tier Member Saat Ini: " + user.getMember() + " (" + user.getDiskon().getNama() + ")");
-
         PaketUpgrade terpilih = (PaketUpgrade) cbPaketUpgrade.getSelectedItem();
         Member targetSebelumnya = terpilih == null ? null : terpilih.target;
         cbPaketUpgrade.removeAllItems();
@@ -400,20 +807,20 @@ public class PelangganFrame extends JFrame {
             lblStatusUpgrade.setText("E-Wallet langsung lunas & aktif. Transfer/Tunai menunggu konfirmasi admin.");
         }
 
-        List<UpgradeMember> data = new java.util.ArrayList<>(us.getPengajuanPelanggan(user));
-        java.util.Collections.reverse(data);
+        List<UpgradeMember> data = new ArrayList<>(us.getPengajuanPelanggan(user));
+        Collections.reverse(data);
         UiUtil.isiTabelUpgrade(tUpgrade, mUpgrade, data, false);
     }
 
     private void refreshRiwayat() {
-        List<Booking> data = new java.util.ArrayList<>(bs.getBookingPelanggan(user));
-        java.util.Collections.reverse(data);
+        List<Booking> data = new ArrayList<>(bs.getBookingPelanggan(user));
+        Collections.reverse(data);
         UiUtil.isiTabelBooking(tRiwayat, mRiwayat, data, false, LocalDateTime.now());
     }
 
     private void refreshSemua() {
         us.segarkanPelanggan(user);
-        perbaruiHeader();
+        perbaruiInfoMember();
         bs.perbaruiStatus(LocalDateTime.now());
         refreshJadwal();
         refreshRiwayat();
@@ -431,26 +838,6 @@ public class PelangganFrame extends JFrame {
 
         @Override public String toString() {
             return target + " (Diskon " + target.getPersen() + "%) - " + Fmt.rp(biaya);
-        }
-    }
-
-    /** Warna sel jadwal sesuai isinya. */
-    private static class JadwalRenderer extends DefaultTableCellRenderer {
-        @Override public Component getTableCellRendererComponent(JTable t, Object v, boolean sel, boolean foc, int r, int c) {
-            super.getTableCellRendererComponent(t, v, false, false, r, c);
-            setHorizontalAlignment(CENTER);
-            setForeground(Color.BLACK);
-            String s = String.valueOf(v);
-            if (c == 0) { setBackground(new Color(240, 240, 240)); setFont(getFont().deriveFont(Font.BOLD)); return this; }
-            setFont(getFont().deriveFont(Font.PLAIN));
-            switch (s) {
-                case "Kosong": setBackground(UiUtil.HIJAU); break;
-                case "Terisi": setBackground(UiUtil.MERAH); break;
-                case "Anda": setBackground(UiUtil.BIRU); break;
-                default: setBackground(UiUtil.ABU);
-            }
-            if (sel && "Kosong".equals(s)) setBackground(UiUtil.HIJAU.darker());
-            return this;
         }
     }
 }

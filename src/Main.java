@@ -1,6 +1,7 @@
 import repository.*;
 import service.*;
 import view.LoginFrame;
+import view.UiUtil;
 
 import javax.swing.*;
 import java.nio.file.Path;
@@ -9,7 +10,7 @@ import java.time.LocalDateTime;
 
 public class Main {
     public static void main(String[] args) {
-        try { UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName()); } catch (Exception ignored) {}
+        UiUtil.initTemaTerang();
 
         Path dir = Paths.get("data");
         UserRepository users = new UserRepository(dir);
@@ -21,6 +22,6 @@ public class Main {
         AuthService auth = new AuthService(users);
         bs.perbaruiStatus(LocalDateTime.now());   // lazy expiration saat aplikasi dibuka
 
-        SwingUtilities.invokeLater(() -> new LoginFrame(auth, bs, us).setVisible(true));
+        SwingUtilities.invokeLater(() -> UiUtil.tampilkanMaksimal(new LoginFrame(auth, bs, us)));
     }
 }

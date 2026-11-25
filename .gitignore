@@ -3,8 +3,9 @@ out/
 *.iml
 *.class
 
-\skills/
 SKILL.md
 perintah.txt
 
 struk/
+
+.agents/
